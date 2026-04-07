@@ -1,17 +1,13 @@
 import requests
 import json
 import time
+import config
 from datetime import datetime
-
-URL = "https://www.ebilet.pl/sport/sporty-druzynowe/siatkowka"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-}
 
 def get_available_tickets():
     available_events = []
     try:
-        response = requests.get(URL, headers=HEADERS, timeout=10)
+        response = requests.get(config.BASE_URL, headers=config.HEADERS, timeout=10)
         if response.status_code != 200: return []
 
         start_marker = '<script id="serverApp-state" type="application/json">'
@@ -65,23 +61,15 @@ def run_target_monitor(target):
             else:
                 print(f"[{timestamp}] Cel: {target['title'][:30]}... | Status: Czekam", end='\r')
             
-            time.sleep(5)
+            time.sleep(config.CHECK_INTERVAL)
     except KeyboardInterrupt:
         print("\n\nMonitorowanie przerwane przez użytkownika.")
-
-import requests
-import json
-
-URL = "https://www.ebilet.pl/sport/sporty-druzynowe/siatkowka"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-}
 
 def get_all_events():
     """Pobiera wszystkie mecze, niezależnie od dostępności biletów."""
     all_events = []
     try:
-        response = requests.get(URL, headers=HEADERS, timeout=10)
+        response = requests.get(config.BASE_URL, headers=config.HEADERS, timeout=10)
         if response.status_code != 200: return []
 
         start_marker = '<script id="serverApp-state" type="application/json">'

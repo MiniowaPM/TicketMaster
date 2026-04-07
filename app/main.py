@@ -1,12 +1,13 @@
 import sys
 import os
 import time
+import utils.config as config
 from datetime import datetime
-from utils.monitor import get_available_tickets, run_target_monitor, get_all_events
+from utils.monitor import run_target_monitor, get_all_events
 
 def main():
     print("--- EBILET SELECTOR ---")
-    
+    print(f"Target URL: {config.BASE_URL}")
     # 1. Pobierz listę dostępnych biletów
     print("Skanowanie biletów...")
     events = get_all_events()
