@@ -1,5 +1,3 @@
-# config.py
-
 # USTAWIENIA PORTALU
 BASE_URL = "https://www.ebilet.pl/sport/sporty-druzynowe/siatkowka"
 
