@@ -38,30 +38,96 @@ def start_purchase(target_url: str):
 def execute_buy_sequence(page: Page, url: str):
     """Sekwencja kroków automatyzujących dodanie do koszyka."""
     print(f"[BUYER] Nawigacja do: {url}")
-    page.goto(url, wait_until="networkidle")
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
-    # 1. Odblokowanie ukrytego trybu AutoReservation (Ekspres)
-    print("[BUYER] Aktywacja trybu automatycznego wyboru biletów...")
-    page.evaluate("index.autoReservation.visible(true)")
-    page.evaluate("index.autoReservation.step(2)") # Przeskok do wyboru ilości biletów
+    print("[BUYER] Usuwanie blokad interfejsu...")
+    page.evaluate("""
+        () => {
+            const ids = ['loading-view', 'overlay', 'cookies-overlay'];
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.remove(); 
+            });
+            document.documentElement.style.scrollBehavior = 'auto';
+        }
+    """)
 
-    # 2. Wybór ilości biletów
-    # Selektor id^ dopasowuje początek id, bo końcówka (id kategorii) może być zmienna
-    quantity_selector = "select[id^='leftMenu-ticketTypeTicketsQuantity-select-']"
-    page.wait_for_selector(quantity_selector, timeout=15000)
-    
-    print(f"[BUYER] Ustawianie liczby biletów: {config.TICKETS_COUNT}")
-    page.select_option(quantity_selector, str(config.TICKETS_COUNT))
+    # 1. Forsowne wstrzyknięcie trybu AutoReservation
+    activated = False
+    for i in range(10):
+        try:
+            page.wait_for_function("window.index !== undefined", timeout=3000)
+            page.evaluate("""
+                () => {
+                    if(window.index && window.index.autoReservation) {
+                        index.autoReservation.visible(true);
+                        index.autoReservation.step(2);
+                        // Forsujemy widoczność kontenerów biletów
+                        const style = document.createElement('style');
+                        style.innerHTML = `
+                            .auto-reservation-window, .auto-reservation, .ticket-type-box { 
+                                display: block !important; 
+                                visibility: visible !important; 
+                                opacity: 1 !important; 
+                                height: auto !important; 
+                            }
+                            #autoReservation-addToBasket-btn {
+                                display: block !important;
+                                visibility: visible !important;
+                            }
+                        `;
+                        document.head.appendChild(style);
+                    }
+                }
+            """)
+            # Sprawdzamy czy panel faktycznie się pojawił
+            page.wait_for_selector("select[id^='leftMenu-ticketTypeTicketsQuantity-select-']", state="attached", timeout=2000)            
+            activated = True
+            print("[BUYER] Panel rezerwacji aktywowany.")
+            break
+        except:
+            print(f"[BUYER] Próba {i+1}: Stabilizacja widoku...")
+            time.sleep(0.5)
 
-    # 3. Dodanie do koszyka
-    add_to_cart_btn = "#autoReservation-addToBasket-btn"
-    page.wait_for_selector(add_to_cart_btn)
+    if not activated:
+        print("[BUYER] Nie udało się wywołać panelu rezerwacji.")
+        return
+
+    try:
+        # 2. Wybór ilości biletów
+
+            # quantity_selects = page.locator("select[id^='leftMenu-ticketTypeTicketsQuantity-select-']")
+            # print(f"[BUYER] Próba ustawienia {config.TICKETS_COUNT} biletów...")
+            # quantity_selects.first.select_option(value=str(config.TICKETS_COUNT), force=True)
+
+        # Wersja siłowa
+        print(f"[BUYER] Ustawiam {config.TICKETS_COUNT} biletów (JS Direct)...")
+        page.evaluate(f"""
+            (count) => {{
+                const sel = document.querySelector("select[id^='leftMenu-ticketTypeTicketsQuantity-select-']");
+                if (sel) {{
+                    sel.value = count;
+                    sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                }}
+            }}
+        """, str(config.TICKETS_COUNT))
+
+        time.sleep(1)
+
+        # 4. Dodanie do koszyka
+
+            # add_btn = "#autoReservation-addToBasket-btn"
+
+            # time.sleep(0.8)
+
+            # page.evaluate(f"document.querySelector('{add_btn}').classList.remove('disabled')")
+
+            # print("[BUYER] Klikam przycisk rezerwacji...")
+            # page.locator(add_btn).click(force=True)
     
-    # Usuwamy klasę 'disabled', jeśli JS jej nie zdjął
-    page.evaluate(f"document.querySelector('{add_to_cart_btn}').classList.remove('disabled')")
-    
-    print("[BUYER] Klikam: DODAJ DO KOSZYKA")
-    page.click(add_to_cart_btn)
+    except Exception as e:
+        print(f"[BUYER] Błąd interakcji: {e}")
+        page.screenshot(path=f"debug_final_{int(time.time())}.png")
 
     # 4. Weryfikacja rezerwacji
     verify_reservation(page)
