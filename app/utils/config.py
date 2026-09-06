@@ -4,7 +4,7 @@ BASE_URL = "https://www.ebilet.pl/sport/sporty-druzynowe/siatkowka"
 # USTAWIENIA SNIPERA
 CHECK_INTERVAL = 5       # Czas między zapytaniami (sekundy)
 TICKETS_COUNT = 6        # Ile biletów bot ma próbować kupić
-HEADLESS = False         # Czy pokazywać okno przeglądarki (False = widoczne)
+HEADLESS = True          # Zmieniono z powrotem na True (bot działa w tle, wyskoczy tylko po sukcesie)
 
 # IDENTYFIKACJA (User-Agent pomaga omijać podstawowe blokady)
 HEADERS = {

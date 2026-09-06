@@ -1,49 +1,74 @@
-import requests
 import json
 import time
 import utils.config as config
 from datetime import datetime
+from playwright.sync_api import sync_playwright
+from playwright_stealth import Stealth
 
 def run_target_monitor(target):
     target_id = target['id']
     
-    try:
-        while True:
-            current_events = get_all_events()
-            target_status = next((ev for ev in current_events if ev['id'] == target_id), None)            
-            
-            if not target_status:
-                print(f"\nBłąd: Mecz {target_id} zniknął z systemu!")
-                return False
-            
-            timestamp = datetime.now().strftime('%H:%M:%S')
-            
-            if target_status['is_buyable']:
-                print(f"\n[{timestamp}] !!! BILETY SĄ DOSTĘPNE !!!")
-                print(f"Bilety na {target['title']} są dostępne!")
-                print(f"Link: {target.get('url', 'Przejdź do strony eBilet')}")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        stealth = Stealth()
+        stealth.apply_stealth_sync(page)
+        
+        try:
+            while True:
+                current_events = get_all_events(page)
+                target_status = next((ev for ev in current_events if ev['id'] == target_id), None)            
                 
-                print("\nKonczę monitorowanie. Przechodzę do zakupu...")
-                return True 
-            else:
-                print(f"[{timestamp}] Cel: {target['title'][:30]}... | Status: Czekam", end='\r')
-            
-            time.sleep(config.CHECK_INTERVAL)
-    except KeyboardInterrupt:
-        print("\n\nMonitorowanie przerwane przez użytkownika.")
-        return False
+                if not target_status:
+                    print(f"\nBłąd: Mecz {target_id} zniknął z systemu!")
+                    return False
+                
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                
+                if target_status['is_buyable']:
+                    print(f"\n[{timestamp}] !!! BILETY SĄ DOSTĘPNE !!!")
+                    print(f"Bilety na {target['title']} są dostępne!")
+                    print(f"Link: {target.get('url', 'Przejdź do strony eBilet')}")
+                    
+                    print("\nKonczę monitorowanie. Przechodzę do zakupu...")
+                    return True 
+                else:
+                    print(f"[{timestamp}] Cel: {target['title'][:30]}... | Status: Czekam", end='\r')
+                
+                time.sleep(config.CHECK_INTERVAL)
+        except KeyboardInterrupt:
+            print("\n\nMonitorowanie przerwane przez użytkownika.")
+            return False
+        finally:
+            browser.close()
 
 
-def get_all_events():
+def get_all_events(page=None):
     """Pobiera wszystkie mecze, niezależnie od dostępności biletów."""
+    
+    if page is None:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            temp_page = browser.new_page()
+            stealth = Stealth()
+            stealth.apply_stealth_sync(temp_page)
+            events = _fetch_events_from_page(temp_page)
+            browser.close()
+            return events
+    else:
+        return _fetch_events_from_page(page)
+
+def _fetch_events_from_page(page):
     all_events = []
     try:
-        response = requests.get(config.BASE_URL, headers=config.HEADERS, timeout=10)
-        if response.status_code != 200: return []
+        page.goto(config.BASE_URL, wait_until="domcontentloaded", timeout=30000)
+        # Give it a tiny bit of time to settle just in case
+        time.sleep(1)
+        html_content = page.content()
 
         start_marker = '<script id="serverApp-state" type="application/json">'
-        if start_marker in response.text:
-            raw_json = response.text.split(start_marker)[1].split('</script>')[0]
+        if start_marker in html_content:
+            raw_json = html_content.split(start_marker)[1].split('</script>')[0]
             data = json.loads(raw_json)
             
             for key in data:

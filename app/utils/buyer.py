@@ -24,10 +24,23 @@ def start_purchase(target_url: str):
 
         try:
             # Przejście do procesu zakupu
-            execute_buy_sequence(page, target_url)
+            success = execute_buy_sequence(page, target_url)
             
+            if success and config.HEADLESS:
+                print("[BUYER] Przełączanie z trybu ukrytego (Headless) na widoczny, aby dokończyć zakup...")
+                context.storage_state(path=config.COOKIES_FILE)
+                browser.close()
+                
+                # Uruchamiamy nową widoczną przeglądarkę
+                browser = p.chromium.launch(headless=False)
+                context = browser.new_context(storage_state=config.COOKIES_FILE)
+                page = context.new_page()
+                page.goto(target_url, wait_until="domcontentloaded")
+                print("[BUYER] Przeglądarka otwarta. Dokończ płatność!")
+                
             # Utrzymanie sesji po sukcesie
-            keep_browser_open(page)
+            if success:
+                keep_browser_open(page)
 
         except Exception as e:
             print(f"[BUYER] Błąd krytyczny: {e}")
@@ -52,102 +65,171 @@ def execute_buy_sequence(page: Page, url: str):
         }
     """)
 
-    # 1. Forsowne wstrzyknięcie trybu AutoReservation
-    activated = False
-    for i in range(10):
-        try:
-            page.wait_for_function("window.index !== undefined", timeout=3000)
-            page.evaluate("""
-                () => {
-                    if(window.index && window.index.autoReservation) {
-                        index.autoReservation.visible(true);
-                        index.autoReservation.step(2);
-                        // Forsujemy widoczność kontenerów biletów
-                        const style = document.createElement('style');
-                        style.innerHTML = `
-                            .auto-reservation-window, .auto-reservation, .ticket-type-box { 
-                                display: block !important; 
-                                visibility: visible !important; 
-                                opacity: 1 !important; 
-                                height: auto !important; 
-                            }
-                            #autoReservation-addToBasket-btn {
-                                display: block !important;
-                                visibility: visible !important;
-                            }
-                        `;
-                        document.head.appendChild(style);
+    # 1. Włączanie trybu rezerwacji (EKSPRES) poprzez aktywację w obiekcie strony (Knockout.js)
+    print("[BUYER] Wymuszam otwarcie panelu AutoReservation...")
+    try:
+        # Próbujemy użyć przycisku EKSPRES lub manualnie kliknąć pierwszą dostępną strefę
+        page.evaluate("""
+            () => {
+                if(window.index) {
+                    if (window.index.startWindow && typeof window.index.startWindow.expressModeClick === 'function') {
+                        window.index.startWindow.expressModeClick();
+                    } else if (window.index.autoReservation) {
+                        window.index.autoReservation.visible(true);
+                        window.index.autoReservation.step(2);
                     }
                 }
-            """)
-            # Sprawdzamy czy panel faktycznie się pojawił
-            page.wait_for_selector("select[id^='leftMenu-ticketTypeTicketsQuantity-select-']", state="attached", timeout=2000)            
-            activated = True
-            print("[BUYER] Panel rezerwacji aktywowany.")
-            break
-        except:
-            print(f"[BUYER] Próba {i+1}: Stabilizacja widoku...")
-            time.sleep(0.5)
-
-    if not activated:
-        print("[BUYER] Nie udało się wywołać panelu rezerwacji.")
+            }
+        """)
+        # Jeśli strona korzysta z Manual Map Mode, musimy kliknąć strefę na liście
+        is_auto_reservation_ready = page.evaluate("window.index && window.index.autoReservation && typeof window.index.autoReservation.filtredPriceZones === 'function' && window.index.autoReservation.filtredPriceZones().length > 0")
+        
+        if not is_auto_reservation_ready:
+            print("[BUYER] Brak aktywnych stref w Auto-Rezerwacji (Tryb Manualny).")
+            
+            # W tym trybie trzeba fizycznie kliknąć w kolorowy prostokąt (sektor) na mapie Canvas!
+            # Mapa to Leaflet, który renderuje sektory na elemencie <canvas>.
+            map_canvas = page.locator("canvas.leaflet-zoom-animated").first
+            try:
+                map_canvas.wait_for(state="visible", timeout=3000)
+                box = map_canvas.bounding_box()
+                if box:
+                    # Celujemy w środek poziomo i 3/4 wysokości pionowo (tam gdzie są kolorowe sektory na rysunku)
+                    target_x = box["width"] / 2
+                    target_y = box["height"] * 0.75
+                    print(f"[BUYER] Klikam w mapę (sektor) na współrzędnych: {target_x}, {target_y}...")
+                    map_canvas.click(position={"x": target_x, "y": target_y}, force=True)
+                    time.sleep(1)
+            except:
+                print("[BUYER] UWAGA: Nie znaleziono mapy (canvas) do kliknięcia!")
+                
+            # Fallback (na wypadek, gdyby to nie była mapa Canvas, a starsza lista)
+            available_zones = page.locator(".items-container .item.row:not(.disabled):not(.noactive)")
+            if available_zones.count() > 0 and not page.locator("text='Liczba biletów'").first.is_visible():
+                print("[BUYER] Zabezpieczenie: Próbuję jeszcze raz kliknąć strefę na liście bocznej...")
+                available_zones.first.click(force=True)
+                time.sleep(1)
+        else:
+            print("[BUYER] Panel Auto-Rezerwacji załadowany.")
+    except Exception as e:
+        print(f"[BUYER] Nie udało się otworzyć panelu rezerwacji/strefy: {e}")
+        page.screenshot(path=f"debug_panel_{int(time.time())}.png")
         return
 
     try:
-        # 2. Wybór ilości biletów
+        # 2. Wybór ilości biletów i dodanie do koszyka
+        print(f"[BUYER] Próba ustawienia {config.TICKETS_COUNT} biletów...")
+        
+        # Czekamy aż pojawi się przycisk "Dodaj do koszyka", co oznacza że modal jest gotowy
+        add_btn = page.locator("button:has-text('Dodaj do koszyka'):visible")
+        add_btn.first.wait_for(state="visible", timeout=5000)
+        print("[BUYER] Modal wyboru biletów jest widoczny.")
+        
+        # 1. Próbujemy natywny <select> - najbardziej niezawodny
+        ticket_selects = page.locator("select:visible")
+        if ticket_selects.count() > 0:
+            print("[BUYER] Znaleziono klasyczny <select> wyboru biletów.")
+            current_val = ticket_selects.first.input_value()
+            if current_val != str(config.TICKETS_COUNT):
+                ticket_selects.first.select_option(str(config.TICKETS_COUNT))
+                print(f"[BUYER] Zmieniono ilość biletów na {config.TICKETS_COUNT} (natywny select).")
+                time.sleep(0.5)
+        else:
+            # 2. Próbujemy customowy dropdown po etykiecie "Liczba biletów"
+            print("[BUYER] Brak natywnego <select>, szukam customowego dropdownu...")
+            # Pobieramy kontener z "Liczba biletów" i szukamy w nim klikalnego elementu pokazującego "1"
+            container = page.locator("div:has-text('Liczba biletów')").last
+            if container.is_visible():
+                print("[BUYER] Otwieram customowy dropdown...")
+                # Szukamy miejsca, gdzie wyświetla się wybrana liczba (zazwyczaj tekst "1") i klikamy
+                # Bezpieczniej jest kliknąć po prostu pod napisem "Liczba biletów" wykorzystując bounding_box
+                box = page.locator("text='Liczba biletów'").first.bounding_box()
+                if box:
+                    # Klikamy trochę poniżej etykiety (tam, gdzie jest pole wyboru)
+                    page.mouse.click(box["x"] + 10, box["y"] + box["height"] + 15)
+                    time.sleep(0.5)
+                    # Teraz szukamy i klikamy pożądaną liczbę na liście (musi być dokładnie ta liczba jako cały tekst, np. opcja w liście)
+                    target_option = page.locator(f"text='{config.TICKETS_COUNT}'").locator("visible=true").last
+                    target_option.click(force=True)
+                    print(f"[BUYER] Zmieniono ilość biletów na {config.TICKETS_COUNT} (custom dropdown).")
+                    time.sleep(0.5)
+        
+        # Ostatecznie klikamy przycisk 'Dodaj do koszyka'
+        if add_btn.count() > 0:
+            print("[BUYER] Klikam przycisk 'Dodaj do koszyka'...")
+            add_btn.first.click(force=True)
+            success = True
+        else:
+            print("[BUYER] UWAGA: Przycisk 'Dodaj do koszyka' zniknął?!")
+            success = False
+            
+    except Exception as e:
+        print(f"[BUYER] UWAGA: Błąd wizualnego wyboru ilości biletów: {e}")
 
-            # quantity_selects = page.locator("select[id^='leftMenu-ticketTypeTicketsQuantity-select-']")
-            # print(f"[BUYER] Próba ustawienia {config.TICKETS_COUNT} biletów...")
-            # quantity_selects.first.select_option(value=str(config.TICKETS_COUNT), force=True)
+        # 4. Opcjonalne okno wyboru strefy (po kliknięciu Dodaj do koszyka)
+        try:
+            print("[BUYER] Oczekuję na ewentualne okno wyboru strefy...")
+            # Szukamy jakiegokolwiek przycisku potwierdzającego, który pojawia się po 1-2 sekundach
+            # Możliwe teksty: Rezerwuj, Potwierdź, OK, Zmień, Wybierz
+            time.sleep(1.5)
+            
+            # Pobieramy wszystkie widoczne selecty, które NIE SĄ od wyboru biletów
+            zone_selects = page.locator("select:visible").exclude(page.locator("select[id^='leftMenu-ticketTypeTicketsQuantity-select-']"))
+            if zone_selects.count() > 0:
+                print("[BUYER] Wykryto okno wyboru strefy (select)! Wybieram pierwszą opcję...")
+                options = zone_selects.first.locator("option").all()
+                for opt in options:
+                    val = opt.get_attribute("value")
+                    if val and val != "":
+                        zone_selects.first.select_option(value=val)
+                        print(f"[BUYER] Wybrano strefę o wartości: {val}")
+                        break
+                        
+            # Alternatywnie szukamy przycisków radio
+            radios = page.locator("input[type='radio']:visible")
+            if radios.count() > 0:
+                print("[BUYER] Znaleziono opcje strefy jako radio. Wybieram pierwszą...")
+                radios.first.click(force=True)
 
-        # Wersja siłowa
-        print(f"[BUYER] Ustawiam {config.TICKETS_COUNT} biletów (JS Direct)...")
-        page.evaluate(f"""
-            (count) => {{
-                const sel = document.querySelector("select[id^='leftMenu-ticketTypeTicketsQuantity-select-']");
-                if (sel) {{
-                    sel.value = count;
-                    sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                }}
-            }}
-        """, str(config.TICKETS_COUNT))
-
-        time.sleep(1)
-
-        # 4. Dodanie do koszyka
-
-            # add_btn = "#autoReservation-addToBasket-btn"
-
-            # time.sleep(0.8)
-
-            # page.evaluate(f"document.querySelector('{add_btn}').classList.remove('disabled')")
-
-            # print("[BUYER] Klikam przycisk rezerwacji...")
-            # page.locator(add_btn).click(force=True)
+            # Klikamy dowolny przycisk z popularnymi nazwami potwierdzenia, jeśli jest widoczny
+            for btn_text in ["Rezerwuj", "Potwierdź", "OK", "Zatwierdź", "Wybierz"]:
+                confirm_btn = page.locator(f"button:has-text('{btn_text}'):visible")
+                if confirm_btn.count() > 0:
+                    print(f"[BUYER] Klikam przycisk '{btn_text}' w modalu...")
+                    confirm_btn.first.click(force=True)
+                    break
+        except Exception as e:
+            print("[BUYER] Brak dodatkowego okna wyboru strefy (lub zniknęło).")
     
     except Exception as e:
         print(f"[BUYER] Błąd interakcji: {e}")
         page.screenshot(path=f"debug_final_{int(time.time())}.png")
 
     # 4. Weryfikacja rezerwacji
-    verify_reservation(page)
+    return verify_reservation(page)
 
-def verify_reservation(page: Page):
+def verify_reservation(page: Page) -> bool:
     """Sprawdza, czy serwer potwierdził rezerwację."""
     print("[BUYER] Oczekiwanie na potwierdzenie z serwera...")
-    # Czekamy na przejście do kolejnego kroku (np. Dane kontaktowe)
-    # Na eBilet krok 4 to zazwyczaj Contact Details
+    # Czekamy na przejście do kolejnego kroku (np. Dane kontaktowe) lub pojawienie się timera rezerwacji
     try:
-        page.wait_for_selector("#step-4", timeout=10000)
+        # eBilet może przenieść nas do #step-4 (stary design) lub pokazać timer i pasek z przyciskiem "Kup X bilet" (nowy design)
+        # page.locator(...).or_(page.locator(...)) pozwala czekać na jedno z dwóch
+        success_locator = page.locator("#step-4").or_(page.locator("div#timer:visible"))
+        success_locator.first.wait_for(timeout=10000)
+        
         print("\n" + "!"*40)
-        print("!!! SUKCES: BILETY SĄ W KOSZYKU !!!")
-        print("Miejsca zostały zarezerwowane na ok. 10 minut.")
-        print("Dokończ płatność ręcznie.")
+        print("!!! SUKCES: BILETY SĄ ZAREZERWOWANE !!!")
+        print("Miejsca zostały zablokowane w systemie (masz ok. 10 minut).")
+        print("Kliknij 'Kup bilet' i dokończ płatność ręcznie w oknie przeglądarki.")
         print("!"*40 + "\n")
         # Alarm dźwiękowy
         for _ in range(5): print('\a'); time.sleep(0.2)
+        return True
     except:
-        print("[BUYER] UWAGA: Nie wykryto przejścia do kroku 4. Sprawdź okno przeglądarki!")
+        print("[BUYER] UWAGA: Nie udało się zweryfikować rezerwacji (brak kroku 4 lub timera). Sprawdź okno przeglądarki!")
+        page.screenshot(path=f"debug_verify_{int(time.time())}.png")
+        return False
 
 def keep_browser_open(page: Page):
     """Zatrzymuje skrypt, dopóki użytkownik nie zamknie przeglądarki."""
