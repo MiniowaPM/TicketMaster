@@ -206,7 +206,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-data/auth.json
+app/data/auth.json
 
 *.png
 

@@ -22,8 +22,8 @@ def main():
     # 2. Wyświetl menu wyboru
     print("\nLista wszystkich meczów:")
     for index, ev in enumerate(events):
-        status_icon = "🟢" if ev['is_buyable'] else "🔴"
-        print(f"[{index}] {status_icon} {ev['date']} | {ev['title']}")
+        status_icon = "[+]" if ev.is_buyable else "[-]"
+        print(f"[{index}] {status_icon} {ev.date} | {ev.title}")
 
     # 3. Użytkownik wybiera cel
     while True:
@@ -36,7 +36,7 @@ def main():
         except ValueError:
             print("Wpisz cyfrę!")
 
-    print(f"\nUstawiono cel: {target_event['title']}")
+    print(f"\nUstawiono cel: {target_event.title}")
     print(f"Bot będzie sprawdzał dostępność co {config.CHECK_INTERVAL} sekund...")
 
     # 4. Uruchomienie pętli monitorującej tylko ten jeden cel
@@ -44,8 +44,8 @@ def main():
 
     # 5. Jeżeli dostępny do zakupu rozpczynamy sekwencję rezerwacji miejsc i zakupu
     if success:
-        print(f"\n[MAIN] Przekazuję cel do modułu BUYER: {target_event['url']}")
-        start_purchase(target_event['url'])
+        print(f"\n[MAIN] Przekazuję cel do modułu BUYER: {target_event.url}")
+        start_purchase(target_event.url)
     else:
         print("\n[MAIN] Monitorowanie zakończone bez zakupu.")
 

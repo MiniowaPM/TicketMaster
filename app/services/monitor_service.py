@@ -4,9 +4,11 @@ from services.config_service import config
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
+from services.logger_service import logger
+from data.models import Event
 
-def run_target_monitor(target):
-    target_id = target['id']
+def run_target_monitor(target: Event):
+    target_id = target.id
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -17,27 +19,28 @@ def run_target_monitor(target):
         try:
             while True:
                 current_events = get_all_events(page)
-                target_status = next((ev for ev in current_events if ev['id'] == target_id), None)            
+                target_status = next((ev for ev in current_events if ev.id == target_id), None)            
                 
                 if not target_status:
-                    print(f"\nBłąd: Mecz {target_id} zniknął z systemu!")
+                    logger.error(f"Błąd: Mecz {target_id} zniknął z systemu!")
                     return False
                 
-                timestamp = datetime.now().strftime('%H:%M:%S')
-                
-                if target_status['is_buyable']:
-                    print(f"\n[{timestamp}] !!! BILETY SĄ DOSTĘPNE !!!")
-                    print(f"Bilety na {target['title']} są dostępne!")
-                    print(f"Link: {target.get('url', 'Przejdź do strony eBilet')}")
+                if target_status.is_buyable:
+                    logger.info("!!! BILETY SĄ DOSTĘPNE !!!")
+                    logger.info(f"Bilety na {target.title} są dostępne!")
+                    logger.info(f"Link: {target.url}")
                     
-                    print("\nKonczę monitorowanie. Przechodzę do zakupu...")
+                    logger.info("Kończę monitorowanie. Przechodzę do zakupu...")
                     return True 
                 else:
-                    print(f"[{timestamp}] Cel: {target['title'][:30]}... | Status: Czekam", end='\r')
+                    # Zostawiamy jeden print dla efektu "odświeżania w tej samej linii", 
+                    # logger zazwyczaj drukuje to w nowych liniach, co zaśmieciłoby konsolę.
+                    # W idealnym świecie ten print trafi do CLI View, ale tymczasowo go tu zostawimy z logowaniem na poziomie DEBUG.
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Cel: {target.title[:30]}... | Status: Czekam", end='\r')
                 
                 time.sleep(config.CHECK_INTERVAL)
         except KeyboardInterrupt:
-            print("\n\nMonitorowanie przerwane przez użytkownika.")
+            logger.warning("Monitorowanie przerwane przez użytkownika.")
             return False
         finally:
             browser.close()
@@ -62,7 +65,6 @@ def _fetch_events_from_page(page):
     all_events = []
     try:
         page.goto(config.BASE_URL, wait_until="domcontentloaded", timeout=30000)
-        # Give it a tiny bit of time to settle just in case
         time.sleep(1)
         html_content = page.content()
 
@@ -77,7 +79,6 @@ def _fetch_events_from_page(page):
                     if isinstance(body, dict) and 'groups' in body:
                         for group in body['groups']:
                             for event in group.get('events', []):
-                                # Pobieramy statusy
                                 is_sold_out = event.get('soldOut', False)
                                 is_unavailable = event.get('currentlyUnavailable', False)
                                 free_seats_data = event.get('freeSeats') or event.get('free_seats') or {}
@@ -88,19 +89,18 @@ def _fetch_events_from_page(page):
                                     tech_id = event.get('id')
 
                                 shop_url = f"https://sklep.ebilet.pl/{tech_id}"
-
-                                # Flaga czy bilet można kupić TERAZ
                                 is_buyable = has_seats and not is_sold_out and not is_unavailable
                                 
-                                all_events.append({
-                                    'id': event.get('id'),
-                                    'title': event.get('title'),
-                                    'date': event.get('date'),
-                                    'is_buyable': is_buyable,
-                                    'status_text': "DOSTĘPNE" if is_buyable else "NIEDOSTĘPNE/WYPRZEDANE",
-                                    'url': shop_url
-                                })
+                                event_obj = Event(
+                                    id=event.get('id'),
+                                    title=event.get('title'),
+                                    date=event.get('date'),
+                                    is_buyable=is_buyable,
+                                    status_text="DOSTĘPNE" if is_buyable else "NIEDOSTĘPNE/WYPRZEDANE",
+                                    url=shop_url
+                                )
+                                all_events.append(event_obj)
         return all_events
     except Exception as e:
-        print(f"Błąd monitora: {e}")
+        logger.error(f"Błąd monitora: {e}")
         return []
