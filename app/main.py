@@ -1,10 +1,10 @@
 import sys
 import os
 import time
-import utils.config as config
+from services.config_service import config
 from datetime import datetime
-from utils.monitor import run_target_monitor, get_all_events
-from utils.buyer import start_purchase
+from services.monitor_service import run_target_monitor, get_all_events
+from services.buyer_service import start_purchase
 
 
 def main():

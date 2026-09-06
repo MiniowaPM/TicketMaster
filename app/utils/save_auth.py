@@ -9,6 +9,6 @@ with sync_playwright() as p:
     print("Zaloguj się ręcznie w oknie przeglądarki...")
     page.wait_for_timeout(60000)
     
-    context.storage_state(path="auth.json")
-    print("Sesja zapisana do auth.json!")
+    context.storage_state(path="data/auth.json")
+    print("Sesja zapisana do data/auth.json!")
     browser.close()

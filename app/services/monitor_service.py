@@ -1,6 +1,6 @@
 import json
 import time
-import utils.config as config
+from services.config_service import config
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth

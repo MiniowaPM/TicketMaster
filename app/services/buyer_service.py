@@ -1,5 +1,6 @@
 import time
-import utils.config as config
+import json
+from services.config_service import config
 from playwright.sync_api import sync_playwright, Page
 from playwright_stealth import Stealth
 
@@ -113,7 +114,7 @@ def execute_buy_sequence(page: Page, url: str):
             print("[BUYER] Panel Auto-Rezerwacji załadowany.")
     except Exception as e:
         print(f"[BUYER] Nie udało się otworzyć panelu rezerwacji/strefy: {e}")
-        page.screenshot(path=f"debug_panel_{int(time.time())}.png")
+        page.screenshot(path=f"debug/debug_panel_{int(time.time())}.png")
         return
 
     try:
@@ -203,7 +204,7 @@ def execute_buy_sequence(page: Page, url: str):
     
     except Exception as e:
         print(f"[BUYER] Błąd interakcji: {e}")
-        page.screenshot(path=f"debug_final_{int(time.time())}.png")
+        page.screenshot(path=f"debug/debug_final_{int(time.time())}.png")
 
     # 4. Weryfikacja rezerwacji
     return verify_reservation(page)
@@ -228,7 +229,7 @@ def verify_reservation(page: Page) -> bool:
         return True
     except:
         print("[BUYER] UWAGA: Nie udało się zweryfikować rezerwacji (brak kroku 4 lub timera). Sprawdź okno przeglądarki!")
-        page.screenshot(path=f"debug_verify_{int(time.time())}.png")
+        page.screenshot(path=f"debug/debug_verify_{int(time.time())}.png")
         return False
 
 def keep_browser_open(page: Page):
