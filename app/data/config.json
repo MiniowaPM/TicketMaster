@@ -3,7 +3,7 @@
     "CHECK_INTERVAL": 5,
     "TICKETS_COUNT": 6,
     "HEADLESS": false,
-    "COOKIES_FILE": "app/data/auth.json",
+    "COOKIES_FILE": "C:\\Users\\miko\\source\\repos\\TicketMaster\\app\\data\\auth.json",
     "SECTOR_PREFERENCE": "cheapest",
     "HEADERS": {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
