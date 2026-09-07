@@ -74,7 +74,9 @@ python app/main.py
 ```
 
 ## 📸 Gallery
-<img width="800" alt="TicketMaster GUI Dashboard" src="assets/gui_screenshot.png" />
+<img width="902" height="632" alt="image" src="https://github.com/user-attachments/assets/95518243-efa6-49a9-b946-cfba4296b212" />
+<img width="902" height="632" alt="image" src="https://github.com/user-attachments/assets/e962a833-8fb6-4bdb-b123-ca26098f8a62" />
+
 
 ## ⚠️ Disclaimer
 **For educational purposes only.** This tool was created as a personal programming challenge to learn web automation, stealth techniques, and GUI development in Python. Using automated bots on ticketing platforms may violate their Terms of Service (ToS). The author does not endorse scalping and assumes no liability for blocked accounts, financial losses, or other damages arising from the use of this software.
