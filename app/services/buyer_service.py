@@ -1,5 +1,6 @@
 import time
 import json
+import re
 from services.config_service import config
 from playwright.sync_api import sync_playwright, Page
 from services.logger_service import logger
@@ -83,28 +84,57 @@ def execute_buy_sequence(page: Page, url: str):
                 }
             }
         """)
-        # Jeśli mapa Canvas jest widoczna, ZAWSZE klikamy w nią, by wywołać modal z animacją.
+        # Sprawdzamy czy mamy do czynienia z nową mapą Canvas
         map_canvas = page.locator("canvas.leaflet-zoom-animated").first
-        if map_canvas.is_visible():
+        
+        is_canvas_map = False
+        try:
+            map_canvas.wait_for(state="visible", timeout=3000)
+            is_canvas_map = True
+        except:
+            pass
+            
+        if is_canvas_map:
+            # Na mapach Canvas kliknięcie w boczne menu NIE otwiera modala, musimy fizycznie kliknąć w mapę.
+            # Wybór po cenie nie jest tu niestety w pełni możliwy bez analizy pikseli.
             box = map_canvas.bounding_box()
             if box:
-                # Celujemy w środek poziomo i 3/4 wysokości pionowo (sektory na dole mapy)
                 target_x = box["width"] / 2
                 target_y = box["height"] * 0.75
-                logger.info(f"Klikam w mapę (sektor) na współrzędnych: {target_x}, {target_y}...")
+                logger.info(f"Wykryto mapę Canvas. Klikam w sektor na współrzędnych: {target_x}, {target_y}...")
                 map_canvas.click(position={"x": target_x, "y": target_y}, force=True)
                 time.sleep(1)
         else:
-            # Fallback dla starszych wydarzeń z listą stref zamiast mapy
-            is_auto_reservation_ready = page.evaluate("window.index && window.index.autoReservation && typeof window.index.autoReservation.filtredPriceZones === 'function' && window.index.autoReservation.filtredPriceZones().length > 0")
-            if not is_auto_reservation_ready:
-                available_zones = page.locator(".items-container .item.row:not(.disabled):not(.noactive)")
-                if available_zones.count() > 0 and not page.locator("text='Liczba biletów'").first.is_visible():
-                    logger.info("Zabezpieczenie: Próbuję jeszcze raz kliknąć strefę na liście bocznej...")
-                    available_zones.first.click(force=True)
-                    time.sleep(1)
+            # Starsza wersja - brak mapy Canvas, używamy wyboru kafelka z panelu (w tym sortowanie po cenie)
+            pref = config.SECTOR_PREFERENCE.value
+            available_zones = page.locator(".items-container .item.row:not(.disabled):not(.noactive)")
+            zones_count = available_zones.count()
+            
+            if zones_count > 0:
+                zone_data = []
+                for i in range(zones_count):
+                    loc = available_zones.nth(i)
+                    text = loc.inner_text()
+                    
+                    match = re.search(r'(\d+)[.,](\d{2})', text)
+                    if match:
+                        price = float(match.group(1) + '.' + match.group(2))
+                    else:
+                        price = 0.0
+                    
+                    zone_data.append({"index": i, "price": price, "locator": loc})
+                
+                if pref == "cheapest":
+                    zone_data.sort(key=lambda x: x["price"])
+                elif pref == "expensive":
+                    zone_data.sort(key=lambda x: x["price"], reverse=True)
+                    
+                selected_zone = zone_data[0]
+                logger.info(f"Brak mapy Canvas. Preferencja: {pref}. Wybrano strefę z ceną: {selected_zone['price']} PLN.")
+                selected_zone["locator"].click(force=True)
+                time.sleep(1)
             else:
-                logger.info("Panel Auto-Rezerwacji załadowany z JS.")
+                logger.info("Panel Auto-Rezerwacji załadowany z JS (brak kafelków i mapy).")
     except Exception as e:
         logger.error(f"Nie udało się otworzyć panelu rezerwacji/strefy: {e}")
         page.screenshot(path=f"debug/debug_panel_{int(time.time())}.png")
