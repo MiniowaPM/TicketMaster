@@ -49,12 +49,14 @@ def load_config() -> AppConfig:
         data = json.load(f)
         return AppConfig(**data)
 
-def save_config(new_config: AppConfig):
+def save_config(new_config: AppConfig) -> None:
     global config
     config = new_config
+    
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        f.write(config.model_dump_json(indent=4))
+    
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+        json.dump(config.model_dump(mode='json'), f, indent=4)
 
 # Zmienna globalna przechowująca załadowaną i zwalidowaną konfigurację
 config = load_config()

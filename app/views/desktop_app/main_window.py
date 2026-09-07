@@ -6,7 +6,7 @@ class TicketBotGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
         
-        self.title("eBilet Sniper Bot - MVC Edition")
+        self.title("eBilet Sniper Bot")
         self.geometry("900x600")
         
         # Konfiguracja kolorów
