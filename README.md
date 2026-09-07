@@ -76,6 +76,7 @@ python app/main.py
 ## 📸 Gallery
 <img width="902" height="632" alt="image" src="https://github.com/user-attachments/assets/95518243-efa6-49a9-b946-cfba4296b212" />
 <img width="902" height="632" alt="image" src="https://github.com/user-attachments/assets/e962a833-8fb6-4bdb-b123-ca26098f8a62" />
+<img width="1282" height="801" alt="image" src="https://github.com/user-attachments/assets/641599a4-fb33-41ed-898f-a9350bb9e547" />
 
 
 ## ⚠️ Disclaimer
