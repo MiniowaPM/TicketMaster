@@ -15,15 +15,23 @@ RESERVATION_TIMEOUT = 12.0
 SEATS_TAKEN_CODES = {79, 62, 21, 17}
 
 
-def start_purchase(target_url: str):
+def start_purchase(target_url: str, stop_event=None):
     """Główna funkcja inicjalizująca przeglądarkę i proces zakupu."""
+    if stop_event and stop_event.is_set():
+        logger.info("Anulowano uruchomienie zakupu (przycisk STOP).")
+        return
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=config.HEADLESS)
+        # Zakup biletów zawsze uruchamiamy w widocznej przeglądarce (headless=False),
+        # aby uniknąć restartowania przeglądarki i ryzyka utraty koszyka/sesji websocket przed płatnością.
+        browser = p.chromium.launch(headless=False)
         
         context_args = {}
         if os.path.exists(config.COOKIES_FILE):
             context_args["storage_state"] = config.COOKIES_FILE
             logger.info(f"Wczytano sesję z {config.COOKIES_FILE}")
+        else:
+            logger.warning("Brak pliku sesji (auth.json). Zakup będzie realizowany bez wcześniejszego zalogowania.")
 
         context = browser.new_context(**context_args)
         page = context.new_page()
@@ -32,27 +40,10 @@ def start_purchase(target_url: str):
         stealth_obj.apply_stealth_sync(page)
 
         try:
-            success = execute_buy_sequence(page, target_url)
-            
-            if success and config.HEADLESS:
-                logger.info("Przełączanie z trybu ukrytego (Headless) na widoczny, aby dokończyć zakup...")
-                current_url = page.url
-                os.makedirs(os.path.dirname(config.COOKIES_FILE), exist_ok=True)
-                context.storage_state(path=config.COOKIES_FILE)
-                browser.close()
-                
-                # Uruchamiamy nową widoczną przeglądarkę
-                browser = p.chromium.launch(headless=False)
-                context = browser.new_context(storage_state=config.COOKIES_FILE)
-                page = context.new_page()
-                stealth_obj = Stealth()
-                stealth_obj.apply_stealth_sync(page)
-                page.goto(current_url, wait_until="domcontentloaded")
-                logger.info("Przeglądarka otwarta. Dokończ płatność!")
-                
-            if success:
-                keep_browser_open(page)
-
+            success = execute_buy_sequence(page, target_url, stop_event=stop_event)
+            if success and not (stop_event and stop_event.is_set()):
+                logger.info("Przeglądarka pozostaje otwarta - dokończ płatność w oknie eBilet.")
+                keep_browser_open(page, stop_event=stop_event)
         except Exception as e:
             logger.error(f"Błąd krytyczny podczas zakupu: {e}", exc_info=True)
         finally:
@@ -62,7 +53,28 @@ def start_purchase(target_url: str):
                 pass
 
 
-def execute_buy_sequence(page: Page, url: str) -> bool:
+def _check_auth_status(page: Page):
+    """Weryfikuje, czy użytkownik jest faktycznie zalogowany w sklepie eBilet."""
+    try:
+        user_info = page.evaluate("""
+            () => {
+                if (window.index && window.index.user) {
+                    const u = window.index.user;
+                    const isLogged = typeof u.isLogged === 'function' ? u.isLogged() : !!u.isLogged;
+                    const email = u.email ? (typeof u.email === 'function' ? u.email() : u.email) : null;
+                    return { isLogged, email };
+                }
+                return null;
+            }
+        """)
+        if user_info:
+            if user_info.get("isLogged"):
+                logger.info(f"Status sesji: Zalogowano pomyślnie jako {user_info.get('email') or 'użytkownik'}.")
+            else:
+                logger.warning("Status sesji: NIEZALOGOWANY (sesja wygasła lub brak autoryzacji). Rezerwacja jako gość.")
+    except Exception:
+        pass
+def execute_buy_sequence(page: Page, url: str, stop_event=None) -> bool:
     """Sekwencja automatyzująca wybór miejsc i dodanie do koszyka."""
     target_total = config.TICKETS_COUNT
 
@@ -88,8 +100,18 @@ def execute_buy_sequence(page: Page, url: str) -> bool:
     # Czyszczenie nakładek blokujących UI i automatyczna akceptacja Cookiebot
     _clean_overlays(page)
 
+    # Sprawdzenie statusu logowania użytkownika
+    _check_auth_status(page)
+
+    if stop_event and stop_event.is_set():
+        logger.info("Przerwano rezerwację (przycisk STOP).")
+        return False
+
     try:
-        if not _wait_for_engine(page):
+        if not _wait_for_engine(page, stop_event=stop_event):
+            if stop_event and stop_event.is_set():
+                logger.info("Przerwano rezerwację (przycisk STOP).")
+                return False
             logger.warning("Silnik rezerwacji eBilet nie załadował się. Przechodzę do procedury awaryjnej DOM...")
             return _run_dom_fallback(page, responses, target_total)
 
@@ -110,9 +132,13 @@ def execute_buy_sequence(page: Page, url: str) -> bool:
         attempt = 0
         basket_full = False
         for zone_index in range(zones_count):
-            if basket_full:
+            if basket_full or (stop_event and stop_event.is_set()):
                 break
             for _ in range(ATTEMPTS_PER_ZONE):
+                if stop_event and stop_event.is_set():
+                    logger.info("Przerwano rezerwację (przycisk STOP).")
+                    return False
+
                 basket = _get_state(page)["basket"]
                 needed = target_total - basket
                 if needed <= 0:
@@ -207,24 +233,48 @@ def _clean_overlays(page: Page):
         pass
 
 
-def _wait_for_engine(page: Page) -> bool:
-    """Czeka na załadowanie modelu mapy i sektorów (do 20s)."""
-    try:
-        page.wait_for_function("""
-            () => window.index &&
-                  window.index.eventMap &&
-                  window.index.eventMap.mapControl &&
-                  window.index.eventMap.mapControl.reservation &&
-                  window.index.eventMap.mapControl.utilities &&
-                  window.index.eventMap.mapControl.utilities.sectorsLayerHash &&
-                  window.index.eventMap.mapControl.utilities.sectorsLayerHash.sectorsLayerHash &&
-                  window.index.eventMap.mapControl.utilities.sectorsLayerHash.sectorsLayerHash.length > 0 &&
-                  window.index.autoReservation &&
-                  typeof window.index.autoReservation.initAutoReservation === 'function'
-        """, timeout=20000)
-        return True
-    except Exception:
-        return False
+def _wait_for_engine(page: Page, stop_event=None) -> bool:
+    """Czeka na załadowanie modelu mapy i sektorów, obsługując potencjalną kolejkę (Waiting Room)."""
+    start_time = time.time()
+    queue_notified = False
+
+    while time.time() - start_time < 30:
+        if stop_event and stop_event.is_set():
+            return False
+
+        try:
+            current_url = page.url.lower()
+            if "queue" in current_url or "poczekalnia" in current_url or page.locator("#queue-view, #waiting-room, [id*='queue']").count() > 0:
+                if not queue_notified:
+                    logger.warning("Wykryto kolejkę oczekujących (Waiting Room / Queue-it)! Czekam na wpuszczenie do sklepu...")
+                    queue_notified = True
+                page.wait_for_timeout(2000)
+                start_time = time.time()  # podtrzymujemy oczekiwanie dopóki trwa kolejka
+                continue
+        except Exception:
+            pass
+
+        try:
+            is_ready = page.evaluate("""
+                () => window.index &&
+                      window.index.eventMap &&
+                      window.index.eventMap.mapControl &&
+                      window.index.eventMap.mapControl.reservation &&
+                      window.index.eventMap.mapControl.utilities &&
+                      window.index.eventMap.mapControl.utilities.sectorsLayerHash &&
+                      window.index.eventMap.mapControl.utilities.sectorsLayerHash.sectorsLayerHash &&
+                      window.index.eventMap.mapControl.utilities.sectorsLayerHash.sectorsLayerHash.length > 0 &&
+                      window.index.autoReservation &&
+                      typeof window.index.autoReservation.initAutoReservation === 'function'
+            """)
+            if is_ready:
+                return True
+        except Exception:
+            pass
+
+        page.wait_for_timeout(500)
+
+    return False
 
 
 def _install_hooks(page: Page):
@@ -547,6 +597,21 @@ def _reset_after_failure(page: Page):
     _dismiss_alert(page)
 
 
+def _play_success_sound():
+    try:
+        import winsound
+        winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        for freq in [750, 1000, 1250]:
+            winsound.Beep(freq, 250)
+    except Exception:
+        try:
+            for _ in range(3):
+                print('\a', end='', flush=True)
+                time.sleep(0.2)
+        except Exception:
+            pass
+
+
 def _report_success(page: Page, basket: int, target_total: int):
     seats = _get_state(page).get("seats", [])
     seats_str = ", ".join(seats[:10]) if seats else "standardowe"
@@ -559,12 +624,7 @@ def _report_success(page: Page, basket: int, target_total: int):
     logger.info(f"Zablokowane ID miejsc: {seats_str}")
     logger.info("Miejsca są zarezerwowane (masz ok. 10 minut na płatność).")
     logger.info("=" * 45)
-    try:
-        for _ in range(3):
-            print('\a', end='', flush=True)
-            time.sleep(0.2)
-    except Exception:
-        pass
+    _play_success_sound()
     # Przejście do kolejnego kroku (Kup bilet / Dane kontaktowe)
     try:
         page.evaluate("() => { if (window.index && window.index.bottomButton && window.index.bottomButton.click) window.index.bottomButton.click(); }")
@@ -651,10 +711,13 @@ def verify_reservation(page: Page, expected_tickets: int = 1) -> bool:
     return False
 
 
-def keep_browser_open(page: Page):
-    """Zatrzymuje skrypt, dopóki użytkownik nie zamknie przeglądarki."""
+def keep_browser_open(page: Page, stop_event=None):
+    """Zatrzymuje skrypt, dopóki użytkownik nie zamknie przeglądarki lub nie kliknie STOP."""
     try:
         while not page.is_closed():
-            time.sleep(1)
+            if stop_event and stop_event.is_set():
+                logger.info("Zatrzymano oczekiwanie przez przycisk STOP.")
+                break
+            time.sleep(0.5)
     except Exception:
         pass

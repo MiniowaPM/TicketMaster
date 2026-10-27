@@ -211,3 +211,5 @@ app/data/auth.json
 *.png
 
 debug/
+
+config.json

@@ -13,6 +13,12 @@ from services.buyer_service import start_purchase
 
 
 def main():
+    if sys.stdout is not None:
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     print("--- EBILET SELECTOR ---")
     print(f"Target URL: {config.BASE_URL}")
 

@@ -131,7 +131,7 @@ class DashboardTab(ctk.CTkFrame):
         try:
             success = run_target_monitor(target_event, stop_event=self.stop_event)
             if success and not self.stop_event.is_set():
-                start_purchase(target_event.url)
+                start_purchase(target_event.url, stop_event=self.stop_event)
         finally:
             self.after(0, self._on_bot_finished)
 

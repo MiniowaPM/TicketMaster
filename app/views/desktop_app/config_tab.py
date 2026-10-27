@@ -19,25 +19,31 @@ class ConfigTab(ctk.CTkFrame):
         self.tickets_entry = ctk.CTkEntry(self, width=100)
         self.tickets_entry.grid(row=1, column=1, padx=10, pady=10, sticky="w")
         self.tickets_entry.insert(0, str(config.TICKETS_COUNT))
+
+        # Check Interval
+        ctk.CTkLabel(self, text="Interwał Sprawdzania (sek):").grid(row=2, column=0, padx=10, pady=10, sticky="e")
+        self.interval_entry = ctk.CTkEntry(self, width=100)
+        self.interval_entry.grid(row=2, column=1, padx=10, pady=10, sticky="w")
+        self.interval_entry.insert(0, str(config.CHECK_INTERVAL))
         
         # Preference
-        ctk.CTkLabel(self, text="Strefa Cenowa:").grid(row=2, column=0, padx=10, pady=10, sticky="e")
+        ctk.CTkLabel(self, text="Strefa Cenowa:").grid(row=3, column=0, padx=10, pady=10, sticky="e")
         self.pref_var = ctk.StringVar(value=config.SECTOR_PREFERENCE.value)
         self.pref_combo = ctk.CTkComboBox(self, values=["cheapest", "expensive", "any"], variable=self.pref_var)
-        self.pref_combo.grid(row=2, column=1, padx=10, pady=10, sticky="w")
+        self.pref_combo.grid(row=3, column=1, padx=10, pady=10, sticky="w")
         
         # Headless
         self.headless_var = ctk.BooleanVar(value=config.HEADLESS)
-        self.headless_check = ctk.CTkCheckBox(self, text="Tryb Headless (Ukryta przeglądarka)", variable=self.headless_var)
-        self.headless_check.grid(row=3, column=0, columnspan=2, padx=10, pady=10)
+        self.headless_check = ctk.CTkCheckBox(self, text="Tryb Headless dla monitora (Ukryta przeglądarka)", variable=self.headless_var)
+        self.headless_check.grid(row=4, column=0, columnspan=2, padx=10, pady=10)
         
         # Account Configuration Button
         self.auth_btn = ctk.CTkButton(self, text="Skonfiguruj Konto (Logowanie)", fg_color="orange", hover_color="#cc6600", command=self.run_auth_script)
-        self.auth_btn.grid(row=4, column=0, columnspan=2, pady=(10, 0))
+        self.auth_btn.grid(row=5, column=0, columnspan=2, pady=(10, 0))
         
         # Save button
         self.save_btn = ctk.CTkButton(self, text="Zapisz Konfigurację", command=self.save_settings)
-        self.save_btn.grid(row=5, column=0, columnspan=2, pady=20)
+        self.save_btn.grid(row=6, column=0, columnspan=2, pady=20)
 
     def run_auth_script(self):
         import threading
@@ -56,14 +62,17 @@ class ConfigTab(ctk.CTkFrame):
         try:
             url_val = self.url_entry.get().strip()
             tickets_val = int(self.tickets_entry.get().strip())
+            interval_val = int(self.interval_entry.get().strip())
             if not url_val:
                 raise ValueError("URL nie może być pusty.")
             if tickets_val < 1:
                 raise ValueError("Liczba biletów musi wynosić co najmniej 1.")
+            if interval_val < 2:
+                raise ValueError("Interwał sprawdzania musi wynosić co najmniej 2 sekundy (zabezpieczenie przed blokadą HTTP 429).")
                 
             new_config = AppConfig(
                 BASE_URL=url_val,
-                CHECK_INTERVAL=config.CHECK_INTERVAL,
+                CHECK_INTERVAL=interval_val,
                 TICKETS_COUNT=tickets_val,
                 HEADLESS=self.headless_var.get(),
                 COOKIES_FILE=config.COOKIES_FILE,

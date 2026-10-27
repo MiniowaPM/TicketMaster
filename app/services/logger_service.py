@@ -26,7 +26,20 @@ def setup_logger(name: str = "TicketMaster") -> logging.Logger:
             logger.addHandler(console_handler)
         else:
             logger.addHandler(logging.NullHandler())
-        
+
+        # Handler do pliku logów w data/logs/ticketmaster.log
+        try:
+            import os
+            from logging.handlers import RotatingFileHandler
+            log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "logs"))
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, "ticketmaster.log")
+            file_handler = RotatingFileHandler(log_file, maxBytes=3 * 1024 * 1024, backupCount=3, encoding="utf-8")
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+        except Exception:
+            pass
+            
     return logger
 
 # Domyślny logger używany w usługach
