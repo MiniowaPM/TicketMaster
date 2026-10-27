@@ -7,8 +7,9 @@ from playwright_stealth import Stealth
 from services.logger_service import logger
 from data.models import Event
 
-def run_target_monitor(target: Event):
+def run_target_monitor(target: Event, stop_event=None) -> bool:
     target_id = target.id
+    logger.info(f"Rozpoczynam monitorowanie celu: {target.title} (ID: {target_id})")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -17,47 +18,66 @@ def run_target_monitor(target: Event):
         stealth.apply_stealth_sync(page)
         
         try:
+            iteration = 0
             while True:
+                if stop_event and stop_event.is_set():
+                    logger.info("Monitorowanie przerwane przez użytkownika.")
+                    return False
+
+                iteration += 1
                 current_events = get_all_events(page)
                 target_status = next((ev for ev in current_events if ev.id == target_id), None)            
                 
                 if not target_status:
-                    logger.error(f"Błąd: Mecz {target_id} zniknął z systemu!")
+                    logger.error(f"Błąd: Wydarzenie '{target.title}' (ID: {target_id}) nie zostało znalezione na liście!")
                     return False
                 
                 if target_status.is_buyable:
+                    logger.info("=" * 40)
                     logger.info("!!! BILETY SĄ DOSTĘPNE !!!")
-                    logger.info(f"Bilety na {target.title} są dostępne!")
+                    logger.info(f"Bilety na: {target.title}")
                     logger.info(f"Link: {target.url}")
-                    
                     logger.info("Kończę monitorowanie. Przechodzę do zakupu...")
+                    logger.info("=" * 40)
                     return True 
                 else:
-                    # Zostawiamy jeden print dla efektu "odświeżania w tej samej linii", 
-                    # logger zazwyczaj drukuje to w nowych liniach, co zaśmieciłoby konsolę.
-                    # W idealnym świecie ten print trafi do CLI View, ale tymczasowo go tu zostawimy z logowaniem na poziomie DEBUG.
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Cel: {target.title[:30]}... | Status: Czekam", end='\r')
+                    logger.info(f"[{iteration}] Oczekiwanie na bilety: {target.title[:35]}... (sprawdzę za {config.CHECK_INTERVAL}s)")
                 
-                time.sleep(config.CHECK_INTERVAL)
+                # Czekaj z możliwością szybkiego przerwania przez stop_event
+                sleep_duration = max(1, config.CHECK_INTERVAL)
+                for _ in range(int(sleep_duration * 10)):
+                    if stop_event and stop_event.is_set():
+                        logger.info("Monitorowanie przerwane przez użytkownika.")
+                        return False
+                    time.sleep(0.1)
+
         except KeyboardInterrupt:
-            logger.warning("Monitorowanie przerwane przez użytkownika.")
+            logger.warning("Monitorowanie przerwane (KeyboardInterrupt).")
+            return False
+        except Exception as e:
+            logger.error(f"Błąd podczas pętli monitorowania: {e}", exc_info=True)
             return False
         finally:
-            browser.close()
-
+            try:
+                browser.close()
+            except Exception:
+                pass
 
 def get_all_events(page=None):
     """Pobiera wszystkie mecze, niezależnie od dostępności biletów."""
-    
     if page is None:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            temp_page = browser.new_page()
-            stealth = Stealth()
-            stealth.apply_stealth_sync(temp_page)
-            events = _fetch_events_from_page(temp_page)
-            browser.close()
-            return events
+            try:
+                temp_page = browser.new_page()
+                stealth = Stealth()
+                stealth.apply_stealth_sync(temp_page)
+                return _fetch_events_from_page(temp_page)
+            finally:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
     else:
         return _fetch_events_from_page(page)
 
@@ -92,9 +112,9 @@ def _fetch_events_from_page(page):
                                 is_buyable = has_seats and not is_sold_out and not is_unavailable
                                 
                                 event_obj = Event(
-                                    id=event.get('id'),
-                                    title=event.get('title'),
-                                    date=event.get('date'),
+                                    id=str(event.get('id')),
+                                    title=event.get('title') or "Bez tytułu",
+                                    date=event.get('date') or "Brak daty",
                                     is_buyable=is_buyable,
                                     status_text="DOSTĘPNE" if is_buyable else "NIEDOSTĘPNE/WYPRZEDANE",
                                     url=shop_url

@@ -1,6 +1,11 @@
 import sys
 import os
 import time
+
+app_dir = os.path.dirname(os.path.abspath(__file__))
+if app_dir not in sys.path:
+    sys.path.insert(0, app_dir)
+
 from services.config_service import config
 from datetime import datetime
 from services.monitor_service import run_target_monitor, get_all_events

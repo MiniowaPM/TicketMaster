@@ -1,5 +1,5 @@
 {
-    "BASE_URL": "https://www.ebilet.pl/sport/sporty-druzynowe/siatkowka",
+    "BASE_URL": "https://www.ebilet.pl/sport/sporty-druzynowe/hokej",
     "CHECK_INTERVAL": 5,
     "TICKETS_COUNT": 6,
     "HEADLESS": false,

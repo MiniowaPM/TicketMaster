@@ -16,8 +16,9 @@ class DashboardTab(ctk.CTkFrame):
         
         # Opcje i Eventy
         self.events = []
-        self.selected_event = None
+        self.event_map = {}
         self.is_running = False
+        self.stop_event = threading.Event()
         self.log_queue = queue.Queue()
         
         add_gui_handler(self.log_queue)
@@ -25,15 +26,16 @@ class DashboardTab(ctk.CTkFrame):
         # Górny panel (Przyciski)
         self.top_frame = ctk.CTkFrame(self)
         self.top_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+        self.top_frame.grid_columnconfigure(1, weight=1)
         
         self.scan_btn = ctk.CTkButton(self.top_frame, text="Skanuj Wydarzenia", command=self.scan_events)
-        self.scan_btn.pack(side="left", padx=10, pady=10)
+        self.scan_btn.grid(row=0, column=0, padx=10, pady=10)
         
-        self.event_combo = ctk.CTkComboBox(self.top_frame, width=400, values=["Najpierw kliknij Skanuj..."])
-        self.event_combo.pack(side="left", padx=10, pady=10)
+        self.event_combo = ctk.CTkComboBox(self.top_frame, width=420, values=["Najpierw kliknij Skanuj..."])
+        self.event_combo.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
         
-        self.start_btn = ctk.CTkButton(self.top_frame, text="START BOT", command=self.start_bot, fg_color="green", state="disabled")
-        self.start_btn.pack(side="right", padx=10, pady=10)
+        self.start_btn = ctk.CTkButton(self.top_frame, text="START BOT", command=self.toggle_bot, fg_color="green", hover_color="#107c41", state="disabled")
+        self.start_btn.grid(row=0, column=2, padx=10, pady=10)
         
         # Konsola logów
         self.log_console = ctk.CTkTextbox(self, state="disabled", fg_color="black", text_color="#00FF00", font=("Consolas", 12))
@@ -55,51 +57,86 @@ class DashboardTab(ctk.CTkFrame):
 
     def scan_events(self):
         self.scan_btn.configure(state="disabled")
-        self.event_combo.set("Skanowanie...")
+        self.event_combo.set("Skanowanie wydarzeń...")
         threading.Thread(target=self._scan_events_worker, daemon=True).start()
 
     def _scan_events_worker(self):
         try:
-            self.events = get_all_events()
-            if not self.events:
-                self.event_combo.configure(values=["Brak wydarzeń."])
-                self.event_combo.set("Brak wydarzeń.")
-            else:
-                event_titles = [ev.title for ev in self.events]
-                self.event_combo.configure(values=event_titles)
-                self.event_combo.set(event_titles[0])
-                self.start_btn.configure(state="normal")
+            events = get_all_events()
+            self.after(0, lambda: self._on_scan_completed(events, None))
         except Exception as e:
+            self.after(0, lambda: self._on_scan_completed([], str(e)))
+
+    def _on_scan_completed(self, events, error_msg):
+        self.scan_btn.configure(state="normal")
+        if error_msg:
+            self.event_combo.configure(values=[f"Błąd: {error_msg}"])
             self.event_combo.set(f"Błąd skanowania")
-        finally:
-            self.scan_btn.configure(state="normal")
+            return
+
+        if not events:
+            self.event_combo.configure(values=["Brak wydarzeń na podanej stronie."])
+            self.event_combo.set("Brak wydarzeń.")
+            self.start_btn.configure(state="disabled")
+            return
+
+        self.events = events
+        self.event_map = {}
+        labels = []
+        for ev in events:
+            status_tag = "[DOSTĘPNE]" if ev.is_buyable else "[BRAK]"
+            label = f"{status_tag} {ev.date} | {ev.title} (ID: {ev.id})"
+            labels.append(label)
+            self.event_map[label] = ev
+
+        self.event_combo.configure(values=labels)
+        self.event_combo.set(labels[0])
+        self.start_btn.configure(state="normal")
+
+    def toggle_bot(self):
+        if self.is_running:
+            self.stop_bot()
+        else:
+            self.start_bot()
+
+    def stop_bot(self):
+        if self.is_running:
+            self.stop_event.set()
+            self.start_btn.configure(state="disabled", text="ZATRZYMYWANIE...")
 
     def start_bot(self):
         if self.is_running:
             return
             
-        selected_title = self.event_combo.get()
-        self.selected_event = next((ev for ev in self.events if ev.title == selected_title), None)
+        selected_label = self.event_combo.get()
+        selected_event = self.event_map.get(selected_label)
         
-        if not self.selected_event:
+        # Fallback jeśli label nie został w mapie (np. ręcznie wpisany lub początkowy)
+        if not selected_event and self.events:
+            selected_event = self.events[0]
+            
+        if not selected_event:
             return
             
         self.is_running = True
-        self.start_btn.configure(state="disabled", fg_color="gray", text="BOT DZIAŁA...")
+        self.stop_event.clear()
+        
+        self.start_btn.configure(state="normal", fg_color="#C0392B", hover_color="#962D22", text="STOP BOT")
         self.scan_btn.configure(state="disabled")
+        self.event_combo.configure(state="disabled")
         
-        # Odpalenie w tle
-        threading.Thread(target=self._bot_worker, daemon=True).start()
+        threading.Thread(target=self._bot_worker, args=(selected_event,), daemon=True).start()
 
-    def _bot_worker(self):
-        # Etap monitorowania
-        success = run_target_monitor(self.selected_event)
-        
-        if success:
-            # Uruchamiamy klasyczny, pojedynczy zakup
-            start_purchase(self.selected_event.url)
-                
-        # Zakończenie
+    def _bot_worker(self, target_event):
+        try:
+            success = run_target_monitor(target_event, stop_event=self.stop_event)
+            if success and not self.stop_event.is_set():
+                start_purchase(target_event.url)
+        finally:
+            self.after(0, self._on_bot_finished)
+
+    def _on_bot_finished(self):
         self.is_running = False
-        self.start_btn.configure(state="normal", fg_color="green", text="START BOT")
+        self.start_btn.configure(state="normal", fg_color="green", hover_color="#107c41", text="START BOT")
         self.scan_btn.configure(state="normal")
+        self.event_combo.configure(state="normal")

@@ -45,17 +45,26 @@ class ConfigTab(ctk.CTkFrame):
         self.auth_btn.configure(state="disabled", text="Przeglądarka otwarta...")
         
         def worker():
-            run_save_auth()
-            self.auth_btn.configure(state="normal", text="Skonfiguruj Konto (Logowanie)")
+            try:
+                run_save_auth()
+            finally:
+                self.after(0, lambda: self.auth_btn.configure(state="normal", text="Skonfiguruj Konto (Logowanie)"))
             
         threading.Thread(target=worker, daemon=True).start()
 
     def save_settings(self):
         try:
+            url_val = self.url_entry.get().strip()
+            tickets_val = int(self.tickets_entry.get().strip())
+            if not url_val:
+                raise ValueError("URL nie może być pusty.")
+            if tickets_val < 1:
+                raise ValueError("Liczba biletów musi wynosić co najmniej 1.")
+                
             new_config = AppConfig(
-                BASE_URL=self.url_entry.get(),
+                BASE_URL=url_val,
                 CHECK_INTERVAL=config.CHECK_INTERVAL,
-                TICKETS_COUNT=int(self.tickets_entry.get()),
+                TICKETS_COUNT=tickets_val,
                 HEADLESS=self.headless_var.get(),
                 COOKIES_FILE=config.COOKIES_FILE,
                 SECTOR_PREFERENCE=SectorPreference(self.pref_var.get()),

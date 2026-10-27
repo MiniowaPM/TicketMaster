@@ -1,10 +1,17 @@
 import json
 import os
+import sys
 from enum import Enum
 from typing import Dict
 from pydantic import BaseModel, field_validator
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "config.json")
+def get_data_dir() -> str:
+    """Returns the persistent data directory and ensures it exists."""
+    data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
+    os.makedirs(data_dir, exist_ok=True)
+    return data_dir
+
+CONFIG_PATH = os.path.join(get_data_dir(), "config.json")
 
 class SectorPreference(str, Enum):
     CHEAPEST = "cheapest"
@@ -22,9 +29,17 @@ class AppConfig(BaseModel):
 
     @field_validator("COOKIES_FILE")
     @classmethod
-    def make_absolute(cls, v: str) -> str:
-        if v and not os.path.isabs(v):
-            return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", v))
+    def resolve_cookies_path(cls, v: str) -> str:
+        data_dir = get_data_dir()
+        default_auth = os.path.join(data_dir, "auth.json")
+        if not v:
+            return default_auth
+        if not os.path.isabs(v):
+            return os.path.abspath(os.path.join(data_dir, os.path.basename(v)))
+        # If absolute, verify that the directory exists on this system
+        parent_dir = os.path.dirname(v)
+        if not os.path.exists(parent_dir):
+            return default_auth
         return v
 
 def load_config() -> AppConfig:
@@ -35,7 +50,7 @@ def load_config() -> AppConfig:
             CHECK_INTERVAL=5,
             TICKETS_COUNT=6,
             HEADLESS=True,
-            COOKIES_FILE="app/data/auth.json",
+            COOKIES_FILE=os.path.join(get_data_dir(), "auth.json"),
             SECTOR_PREFERENCE=SectorPreference.CHEAPEST,
             HEADERS={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -51,7 +66,9 @@ def load_config() -> AppConfig:
 
 def save_config(new_config: AppConfig) -> None:
     global config
-    config = new_config
+    # Mutate existing config object in-place so all modules that imported `config` get the updates
+    for k, v in new_config.model_dump().items():
+        setattr(config, k, v)
     
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     
