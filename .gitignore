@@ -210,4 +210,4 @@ app/data/auth.json
 
 *.png
 
-./debug
+debug/

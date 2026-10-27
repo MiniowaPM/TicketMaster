@@ -73,7 +73,12 @@ def save_config(new_config: AppConfig) -> None:
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-        json.dump(config.model_dump(mode='json'), f, indent=4)
+        data = config.model_dump(mode='json')
+        # Plik sesji w katalogu data zapisujemy jako nazwę względną (bez ścieżki konkretnego komputera)
+        data_dir = get_data_dir()
+        if os.path.dirname(os.path.abspath(data["COOKIES_FILE"])) == data_dir:
+            data["COOKIES_FILE"] = os.path.basename(data["COOKIES_FILE"])
+        json.dump(data, f, indent=4)
 
 # Zmienna globalna przechowująca załadowaną i zwalidowaną konfigurację
 config = load_config()

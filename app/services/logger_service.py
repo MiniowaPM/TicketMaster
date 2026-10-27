@@ -15,11 +15,17 @@ def setup_logger(name: str = "TicketMaster") -> logging.Logger:
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        # Handler do konsoli
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        
-        logger.addHandler(console_handler)
+        # Handler do konsoli (w trybie okienkowym PyInstallera sys.stdout może być None)
+        if sys.stdout is not None:
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setFormatter(formatter)
+            logger.addHandler(console_handler)
+        else:
+            logger.addHandler(logging.NullHandler())
         
     return logger
 
